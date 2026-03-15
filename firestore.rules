@@ -1,0 +1,121 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId}
+// Fields:
+//   - name: string (required) - Player name
+//   - raheeKey: string (required) - Unique key
+//   - wins: number (required) - Win count
+//   - losses: number (required) - Loss count
+//
+// Collection: rooms
+// Document ID: {roomId}
+// Fields:
+//   - status: string (required) - waiting, playing, finished
+//   - players: list (required) - Player objects
+//   - currentTurn: string (optional) - UID
+//   - winner: string (optional) - UID
+//   - createdAt: timestamp (required)
+//
+// Collection: feedback
+// Document ID: {feedbackId}
+// Fields:
+//   - userName: string (required)
+//   - email: string (required)
+//   - rating: number (required) - 1-5
+//   - comment: string (required)
+//   - timestamp: timestamp (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'raheeKey', 'wins', 'losses']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+             data.raheeKey is string && data.raheeKey.size() > 0 &&
+             data.wins is number && data.wins >= 0 &&
+             data.losses is number && data.losses >= 0;
+    }
+
+    function isValidFeedback(data) {
+      return data.keys().hasAll(['userName', 'email', 'rating', 'comment', 'timestamp']) &&
+             data.userName is string && data.userName.size() > 0 && data.userName.size() < 100 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() > 0 && data.comment.size() < 2000 &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidRoom(data) {
+      return data.keys().hasAll(['status', 'players', 'createdAt']) &&
+             data.status in ['waiting', 'playing', 'finished'] &&
+             data.players is list &&
+             data.createdAt is timestamp;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "raheeplays5@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /connection_test/{docId} {
+      allow read: if true;
+    }
+
+    match /cards/{cardId} {
+      allow read: if true;
+      // Allow anyone to create cards (needed for initial setup)
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      // Allow unauthenticated read (needed for login check by key)
+      allow read: if true;
+      // Allow unauthenticated create (needed for signup)
+      allow create: if isValidUser(request.resource.data);
+      // Allow update if valid (for win/loss tracking)
+      allow update: if isValidUser(request.resource.data) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow create: if true; // Allow anyone to create a room
+      allow update: if true; // Allow players to update room state
+      allow delete: if isAdmin();
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if isAdmin();
+      allow create: if isValidFeedback(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /auth_logs/{logId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}
